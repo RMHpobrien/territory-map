@@ -836,6 +836,16 @@ svg.leaflet-image-layer.leaflet-interactive path {
     <div class="dstat" id="datastatus"></div>
 
     <div class="section">
+      <p class="label">Update data</p>
+      <div style="display:flex;gap:8px">
+        <button id="uploadBtn" class="mini">Upload .xlsx</button>
+        <button id="downloadBtn" class="mini ghost" style="display:none">Download updated map</button>
+      </div>
+      <input id="uploadFile" type="file" accept=".xlsx" style="display:none" />
+      <p class="hint" style="margin-top:6px">Upload the latest "Zip Code Territories.xlsx" to preview it here, then download the updated map file and push it to GitHub to publish it for everyone.</p>
+    </div>
+
+    <div class="section">
       <p class="label">Find a territory</p>
       <div class="search-row">
         <input id="q" type="text" placeholder="ZIP code or full address" autocomplete="off" />
@@ -934,65 +944,46 @@ const OFFICES = [{"n":"RMH Systems \u2013 HQ","addr":"1130 SE Westbrooke Dr, Wau
   const DIV_LABEL = {rack:"Rack", allied:"Allied MHE", pkg:"Packaging", scales:"Scales", cranes:"Cranes"};
   const DIV_ORDER = ["rack","allied","pkg","scales","cranes"];
 
-  // ===== Territory data source =====================================================
-  // The map reads ZIP -> rep assignments from an .xlsx it fetches at startup, using the
-  // signed-in user's SharePoint session. For this to work the MAP must be opened from the
-  // SAME SharePoint origin as the file (same-origin request carries the session cookie).
-  //
-  // dataUrl options (pick one):
-  //  1) Same library folder as this map  ->  just the filename (relative), e.g. below.
-  //  2) Anywhere in the same site        ->  the REST $value endpoint, most reliable:
-  //     "https://rmhsystemsia.sharepoint.com/sites/DataWarehouseTeam/_api/web/"+
-  //       "GetFileByServerRelativeUrl('/sites/DataWarehouseTeam/Shared Documents/Zip Code Territories.xlsx')/$value"
-  //  Do NOT use the "...Doc.aspx?sourcedoc=..." viewer link — it returns a web page, not the file.
-  //  If it can't be loaded, the built-in copy is used and the banner says so.
-  const CONFIG = { dataUrl: "Zip Code Territories.xlsx" };
-
+  // ===== Territory data ==============================================================
+  // The map ships with territory data baked in at last publish. "Upload .xlsx" parses
+  // a spreadsheet client-side and previews it here; "Download updated map" bakes that
+  // preview into a new copy of this file to push to GitHub and publish for everyone.
   let dataFromSheet = false;
   let SHEET_EXTRA = {};                 // zips present in the sheet but without a polygon
-  await loadTerritoryData();
+  let currentMap = null;
   classifyGaps();
 
-  async function loadTerritoryData(){
-    try{
-      const resp = await fetch(encodeURI(CONFIG.dataUrl), {cache:"no-store", credentials:"include"});
-      if(!resp.ok) throw new Error("HTTP "+resp.status);
-      const buf = await resp.arrayBuffer();
-      const sig = new Uint8Array(buf.slice(0,2));           // .xlsx is a ZIP -> starts with "PK"
-      if(sig[0]!==0x50 || sig[1]!==0x4B) throw new Error("didn't get an .xlsx (a login/redirect page?)");
-      const wb = XLSX.read(buf, {type:"array"});
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, {header:1, blankrows:false, defval:""});
-      let hr=-1, col={};
-      for(let i=0;i<Math.min(rows.length,15);i++){
-        const r=(rows[i]||[]).map(c=>String(c).toLowerCase());
-        const zi=r.findIndex(c=>/zip/.test(c));
-        if(zi>=0 && r.some(c=>/rack|allied|packag|scale|crane/.test(c))){
-          hr=i; col.zip=zi;
-          col.rack  =r.findIndex(c=>/rack/.test(c));
-          col.allied=r.findIndex(c=>/allied|mhe/.test(c));
-          col.pkg   =r.findIndex(c=>/packag/.test(c));
-          col.scales=r.findIndex(c=>/scale/.test(c));
-          col.cranes=r.findIndex(c=>/crane/.test(c));
-          break;
-        }
+  function parseWorkbook(buf){
+    const sig = new Uint8Array(buf.slice(0,2));           // .xlsx is a ZIP -> starts with "PK"
+    if(sig[0]!==0x50 || sig[1]!==0x4B) throw new Error("not a valid .xlsx file");
+    const wb = XLSX.read(buf, {type:"array"});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, blankrows:false, defval:""});
+    let hr=-1, col={};
+    for(let i=0;i<Math.min(rows.length,15);i++){
+      const r=(rows[i]||[]).map(c=>String(c).toLowerCase());
+      const zi=r.findIndex(c=>/zip/.test(c));
+      if(zi>=0 && r.some(c=>/rack|allied|packag|scale|crane/.test(c))){
+        hr=i; col.zip=zi;
+        col.rack  =r.findIndex(c=>/rack/.test(c));
+        col.allied=r.findIndex(c=>/allied|mhe/.test(c));
+        col.pkg   =r.findIndex(c=>/packag/.test(c));
+        col.scales=r.findIndex(c=>/scale/.test(c));
+        col.cranes=r.findIndex(c=>/crane/.test(c));
+        break;
       }
-      if(hr<0) throw new Error("no header row with a ZIP + division columns");
-      const pick=(row,i)=> (i>=0 && row[i]!=null) ? String(row[i]).trim() : "";
-      const ASSIGN=new Map();
-      for(let i=hr+1;i<rows.length;i++){
-        const row=rows[i]; if(!row) continue;
-        let z=pick(row,col.zip).replace(/[^0-9]/g,"");
-        if(!z) continue; z=z.padStart(5,"0").slice(0,5);
-        ASSIGN.set(z,[pick(row,col.rack),pick(row,col.allied),pick(row,col.pkg),pick(row,col.scales),pick(row,col.cranes)]);
-      }
-      if(!ASSIGN.size) throw new Error("no data rows parsed");
-      applyAssignments(ASSIGN);
-      dataFromSheet=true;
-      setDataStatus(`Loaded ${ASSIGN.size.toLocaleString()} ZIPs from ${CONFIG.dataUrl}`, true);
-    }catch(err){
-      setDataStatus(`Using built-in copy — couldn't load "${CONFIG.dataUrl}" (${err.message}).`, false);
     }
+    if(hr<0) throw new Error("no header row with a ZIP + division columns");
+    const pick=(row,i)=> (i>=0 && row[i]!=null) ? String(row[i]).trim() : "";
+    const ASSIGN=new Map();
+    for(let i=hr+1;i<rows.length;i++){
+      const row=rows[i]; if(!row) continue;
+      let z=pick(row,col.zip).replace(/[^0-9]/g,"");
+      if(!z) continue; z=z.padStart(5,"0").slice(0,5);
+      ASSIGN.set(z,[pick(row,col.rack),pick(row,col.allied),pick(row,col.pkg),pick(row,col.scales),pick(row,col.cranes)]);
+    }
+    if(!ASSIGN.size) throw new Error("no data rows parsed");
+    return ASSIGN;
   }
 
 
@@ -1050,10 +1041,55 @@ const OFFICES = [{"n":"RMH Systems \u2013 HQ","addr":"1130 SE Westbrooke Dr, Wau
   function setDataStatus(msg, ok){
     const el=document.getElementById("datastatus"); if(!el) return;
     el.innerHTML = `<span style="color:${ok?'#2e7d32':'#B71234'}">${ok?'●':'○'}</span> ${msg} `+
-      `<a href="#" id="reloaddata">↻ reload</a>`;
+      (dataFromSheet ? `<a href="#" id="reloaddata">↻ revert to built-in copy</a>` : "");
     const rl=document.getElementById("reloaddata");
     if(rl) rl.onclick=(e)=>{ e.preventDefault(); location.reload(); };
   }
+  setDataStatus("Using built-in copy (baked in at last publish).", true);
+
+  function wireUpload(){
+    const fileInput = document.getElementById("uploadFile");
+    document.getElementById("uploadBtn").addEventListener("click", ()=> fileInput.click());
+    fileInput.addEventListener("change", async ()=>{
+      const file = fileInput.files[0]; if(!file) return;
+      try{
+        const ASSIGN = parseWorkbook(await file.arrayBuffer());
+        applyAssignments(ASSIGN);
+        classifyGaps();
+        dataFromSheet = true;
+        setDataStatus(`Previewing ${ASSIGN.size.toLocaleString()} ZIPs from "${file.name}" — not published yet.`, true);
+        document.getElementById("downloadBtn").style.display = "inline-block";
+        renderApp();
+      }catch(err){
+        setDataStatus(`Couldn't read "${file.name}" (${err.message}).`, false);
+      }
+      fileInput.value = "";
+    });
+    document.getElementById("downloadBtn").addEventListener("click", downloadUpdatedMap);
+  }
+
+  // Rebuilds this same page with the current in-memory territory data baked in, by
+  // patching just the TERR/EXTRA_REPS lines of our own source — the rest of the
+  // multi-MB file (Leaflet, xlsx.js, boundaries) is copied through untouched.
+  async function downloadUpdatedMap(){
+    const raw = await (await fetch(location.pathname + location.search, {cache:"no-store"})).text();
+    const out = raw
+      .replace(/^const TERR = .*$/m, "const TERR = " + JSON.stringify(TERR) + ";")
+      .replace(/^const EXTRA_REPS = .*$/m, "const EXTRA_REPS = " + JSON.stringify(SHEET_EXTRA) + ";");
+    const url = URL.createObjectURL(new Blob([out], {type:"text/html"}));
+    const a = document.createElement("a");
+    a.href = url; a.download = "index.html";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function renderApp(){
+    // clone-and-replace drops any listeners a previous renderApp() call attached
+    ["go","q","gapchk","selbtn","copybtn","clearbtn","basechk","officeschk"].forEach(id=>{
+      const el = document.getElementById(id);
+      el.replaceWith(el.cloneNode(true));
+    });
+    if(currentMap){ currentMap.remove(); currentMap=null; }
 
   // zip -> reps[] for fast search (covers all zips, incl. those w/o polygons)
   const REPS = {};
@@ -1109,6 +1145,7 @@ const OFFICES = [{"n":"RMH Systems \u2013 HQ","addr":"1130 SE Westbrooke Dr, Wau
   const R = opts => CANVAS_WORKS ? L.canvas(opts) : L.svg(opts);
 
   const map = L.map("map", {minZoom:4, maxZoom:12, zoomControl:true, preferCanvas:CANVAS_WORKS}).setView([42.6,-93.7], 6);
+  currentMap = map;
 
   // pane order: fills (overlay 400) < borders (410) < labels (450) < search marker (600)
   map.createPane("states");  map.getPane("states").style.zIndex = 350;  map.getPane("states").style.pointerEvents="none";
@@ -1422,6 +1459,7 @@ const OFFICES = [{"n":"RMH Systems \u2013 HQ","addr":"1130 SE Westbrooke Dr, Wau
 
   // ---- division selector ----
   const dsel = document.getElementById("divselect");
+  dsel.innerHTML = "";
   DIV_ORDER.forEach(dk=>{
     const m = divMeta[dk];
     const id = "d_"+dk;
@@ -1668,6 +1706,10 @@ const OFFICES = [{"n":"RMH Systems \u2013 HQ","addr":"1130 SE Westbrooke Dr, Wau
   renderSelection();
   refresh();
   map.fitBounds(layer.getBounds(),{padding:[10,10]});
+  }
+
+  wireUpload();
+  renderApp();
 })();
 </script>
 </body>

@@ -1682,8 +1682,8 @@ const OFFICES = [{"n":"RMH Systems \u2013 HQ","addr":"1130 SE Westbrooke Dr, Wau
     `<span style="color:#ef8a00;font-weight:700">${HOLES.size} enclosed</span> (darker) — almost certainly missing from the master.`+
     `<br><span style="color:#6b7f94;font-weight:700">Gray</span> = other IL / IN / OH ZIPs (${EXT.size.toLocaleString()}), no rep yet — selectable.`;
   document.getElementById("gapchk").addEventListener("change", e=>{
-    if(e.target.checked){ gapLayer.addTo(map); gapBorderLayer.addTo(map); }
-    else { map.removeLayer(gapLayer); map.removeLayer(gapBorderLayer); }
+    if(e.target.checked){ gapLayer.addTo(map); extLayer.addTo(map); gapBorderLayer.addTo(map); }
+    else { map.removeLayer(gapLayer); map.removeLayer(extLayer); map.removeLayer(gapBorderLayer); }
   });
 
   // ---- multi-select controls ----
